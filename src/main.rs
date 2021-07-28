@@ -1,12 +1,17 @@
+pub mod xor_addr;
+// use crate::xor_addr;
+
 use anyhow::Result;
 use rand::Rng;
 use std::fmt;
 use std::net::UdpSocket;
 use std::{io, str};
+
 // const REMOTE_ADDRESS: &str = "stun.l.google.com:19302";
 const REMOTE_ADDRESS: &str = "142.250.21.127:19302";
+// const REMOTE_ADDRESS: &str = "0.0.0.0:3478";
 
-const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
+pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const ATTRIBUTE_HEADER_SIZE: usize = 4;
 const MESSAGE_HEADER_SIZE: usize = 20; // 160bit = 20bytes
 const TRANSACTION_ID_SIZE: usize = 12; // 96bit = 12 bytes
@@ -38,9 +43,7 @@ impl Message {
     }
     fn build(&mut self) -> Vec<u8> {
         let mut raw = Vec::with_capacity(DEFAULT_RAW_CAPACITY);
-        println!("raw: {:?}", raw);
         raw.extend_from_slice(&[0; MESSAGE_HEADER_SIZE]);
-        println!("raw: {:?}", raw);
         //|0|0|TTTTTTTTTTTTTT|LLLLLLLLLLLLLLLL|
         //|  CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC  |
         //|            Transaction ID         |
@@ -48,14 +51,16 @@ impl Message {
         // 00を埋める
         // 1,2byte目 STUN Message Typeを埋める
         let stun_message_type = self.build_message_type().to_be_bytes();
-        raw[..2].copy_from_slice(&stun_message_type); // 2byte目(16bit)までの変更
-        println!("raw: {:?}", raw);
+        raw[..2].copy_from_slice(&stun_message_type);
         // 3,4byte目 Message Lengthを埋める
-        let stun_message_length = &(MESSAGE_HEADER_SIZE as u16).to_be_bytes();
-        raw[2..4].copy_from_slice(stun_message_length);
+        let stun_message_length = self.build_message_length().to_be_bytes();
+        raw[2..4].copy_from_slice(&stun_message_length);
         // 5~8byte目 Magic Cookieを埋める
+        raw[4..8].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
         // 9~20byte目 Transaction IDを埋める
+        raw[8..20].copy_from_slice(&self.transaction_id);
 
+        // Attributes
         return raw;
     }
     // 先頭2bitは00で始まることは決まっているので、それ以外の14bitを埋める。
@@ -84,21 +89,25 @@ impl Message {
         let left_bit = (method & LEFT_BIT) << METHOD_LEFT_DSHIFT;
         let method = left_bit + centor_bit + right_bit;
         println!(
-            "left: {}, centor: {}, right: {}, => method: {}",
+            "method_left_bit: {}, method_centor_bit: {}, method_right_bit: {}, => method: {}",
             left_bit, centor_bit, right_bit, method
         );
         // class
         let class = self.class.0 as u16;
         let c1 = (class & CLASS_LEFT_BIT) << CLASS_LEFT_SHIFT;
         let c0 = (class & CLASS_RIGHT_BIT) << CLASS_RIGHT_SHIFT;
-        println!("c1: {:?}, c0: {:?}", c1, c0);
+        println!(
+            "c1(class_left_bit): {:?}, c0(class_right_bit): {:?}",
+            c1, c0
+        );
         let class = c1 + c0;
         let message_type_bytes = method + class;
         return message_type_bytes;
     }
     fn build_message_length(&mut self) -> u16 {
-        self.
-        return message_type_bytes;
+        //TODO: impl attributes and message_length
+        let stun_message_length = 0 as u16;
+        return stun_message_length;
     }
 }
 impl fmt::Display for Message {
@@ -114,10 +123,12 @@ impl fmt::Display for Message {
 #[derive(PartialEq, Eq)]
 pub struct Method(u16);
 const METHOD_BINDING: Method = Method(0x001);
+const METHOD_ALLOCATE: Method = Method(0x003);
 impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
             METHOD_BINDING => "METHOD_BINDING",
+            METHOD_ALLOCATE => "METHOD_ALLOCATE",
             _ => "unknown method",
         };
         write!(f, "{}", s)
@@ -126,11 +137,10 @@ impl fmt::Display for Method {
 
 #[derive(PartialEq, Eq)]
 pub struct MethodClass(u8);
-// 0b00: request
-// 0b01: indication
-// 0b10: success
-// 0b11: error
-const CLASS_REQUEST: MethodClass = MethodClass(0x00);
+const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
+const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
+const CLASS_SUCCESS: MethodClass = MethodClass(0x10); // 0b10: success
+const CLASS_ERROR: MethodClass = MethodClass(0x11); // 0b11: error
 impl fmt::Display for MethodClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
@@ -141,7 +151,7 @@ impl fmt::Display for MethodClass {
     }
 }
 
-async fn stun_request(msg: Vec<u8>, remote_address: &str) -> String {
+async fn stun_request(msg: Vec<u8>, remote_address: &str) -> Vec<u8> {
     println!("{:?}, {:}", msg, remote_address);
     let socket = UdpSocket::bind("0.0.0.0:34254").expect("couldn't bind to address");
     println!("{:?}", socket);
@@ -149,12 +159,15 @@ async fn stun_request(msg: Vec<u8>, remote_address: &str) -> String {
         .connect(remote_address)
         .expect("couldn't connect to address");
     socket.send(&msg).expect("couldn't send message");
-    let mut buf = [0; 10];
+    let mut buf = [0; 100];
+    let mut receive_bytes = 0;
     match socket.recv(&mut buf) {
-        Ok(received) => println!("received {} bytes {:?}", received, &buf[..received]),
+        Ok(received) => receive_bytes = received,
         Err(e) => println!("recv function failed: {:?}", e),
     }
-    return "127.0.0.1".to_string();
+    let xor_addr = &buf[..receive_bytes].to_vec();
+    println!("{:?}", &buf);
+    return xor_addr.to_vec();
 }
 
 async fn get_global_ip() -> String {
@@ -162,10 +175,18 @@ async fn get_global_ip() -> String {
     let class = CLASS_REQUEST;
     let mut stun_request_message = Message::new(method, class);
     println!("stun_request_message: {}", stun_request_message);
-    let raw = stun_request_message.build();
-    let response = stun_request(raw, REMOTE_ADDRESS).await;
-    // return response.attributes["XOR-MAPPED-ADDRESS"][0];
-    return response;
+    let message = stun_request_message.build();
+    let response = stun_request(message, REMOTE_ADDRESS).await;
+    // 受け取ったbytes数の内、20bytesはheaderなので、残りを読めば良い。
+    println!("{:?}", &response);
+    println!("{:?}", &response[20..]);
+    let mut xor_addr = xor_addr::XorMappedAddress::new(
+        response[20..].to_vec(),
+        stun_request_message.transaction_id,
+    );
+    // xor_addr.get_from(&msg)?;
+    // println!("{}", xor_addr);
+    return "127.0.0.1".to_string();
 }
 
 #[tokio::main]
