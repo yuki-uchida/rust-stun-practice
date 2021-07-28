@@ -1,9 +1,6 @@
+use anyhow::Result;
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr};
-pub(crate) struct XorMappedAddress {
-    pub family: u8, // enumにしたい
-    pub ip: IpAddr,
-    pub port: u16,
-}
 
 const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const TRANSACTION_ID_SIZE: usize = 12;
@@ -21,6 +18,12 @@ fn safe_xorbytes(dst: &mut [u8], a: &[u8], b: &[u8]) {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct XorMappedAddress {
+    pub family: u8, // enumにしたい
+    pub ip: IpAddr,
+    pub port: u16,
+}
 impl XorMappedAddress {
     pub fn new(attributes_payload: Vec<u8>, transaction_id: [u8; TRANSACTION_ID_SIZE]) -> Self {
         let family = attributes_payload[5..6][0];
@@ -40,5 +43,10 @@ impl XorMappedAddress {
             ip: global_ip,
             port: port,
         }
+    }
+}
+impl fmt::Display for XorMappedAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.family, self.ip, self.port)
     }
 }

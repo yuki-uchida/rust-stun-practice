@@ -166,7 +166,6 @@ async fn stun_request(msg: Vec<u8>, remote_address: &str) -> Vec<u8> {
         Err(e) => println!("recv function failed: {:?}", e),
     }
     let xor_addr = &buf[..receive_bytes].to_vec();
-    println!("{:?}", &buf);
     return xor_addr.to_vec();
 }
 
@@ -174,18 +173,15 @@ async fn get_global_ip() -> String {
     let method = METHOD_BINDING;
     let class = CLASS_REQUEST;
     let mut stun_request_message = Message::new(method, class);
-    println!("stun_request_message: {}", stun_request_message);
     let message = stun_request_message.build();
     let response = stun_request(message, REMOTE_ADDRESS).await;
     // 受け取ったbytes数の内、20bytesはheaderなので、残りを読めば良い。
-    println!("{:?}", &response);
-    println!("{:?}", &response[20..]);
-    let mut xor_addr = xor_addr::XorMappedAddress::new(
+    let xor_addr = xor_addr::XorMappedAddress::new(
         response[20..].to_vec(),
         stun_request_message.transaction_id,
     );
     // xor_addr.get_from(&msg)?;
-    // println!("{}", xor_addr);
+    println!("{:?}", &xor_addr);
     return "127.0.0.1".to_string();
 }
 
