@@ -1,15 +1,6 @@
-pub mod xor_addr;
-// use crate::xor_addr;
-
 use anyhow::Result;
 use rand::Rng;
 use std::fmt;
-use std::net::UdpSocket;
-use std::{io, str};
-
-// const REMOTE_ADDRESS: &str = "stun.l.google.com:19302";
-const REMOTE_ADDRESS: &str = "142.250.21.127:19302";
-// const REMOTE_ADDRESS: &str = "0.0.0.0:3478";
 
 pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const ATTRIBUTE_HEADER_SIZE: usize = 4;
@@ -26,12 +17,12 @@ pub trait Getter {
 }
 
 pub struct Message {
-    method: Method,
-    class: MethodClass,
-    transaction_id: [u8; TRANSACTION_ID_SIZE],
+    pub method: Method,
+    pub class: MethodClass,
+    pub transaction_id: [u8; TRANSACTION_ID_SIZE],
 }
 impl Message {
-    fn new(method: Method, class: MethodClass) -> Self {
+    pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
         rand::thread_rng().fill(&mut random_transaction_id);
         // println!("{:?}", random_transaction_id);
@@ -41,7 +32,7 @@ impl Message {
             transaction_id: random_transaction_id,
         }
     }
-    fn build(&mut self) -> Vec<u8> {
+    pub fn build(&mut self) -> Vec<u8> {
         let mut raw = Vec::with_capacity(DEFAULT_RAW_CAPACITY);
         raw.extend_from_slice(&[0; MESSAGE_HEADER_SIZE]);
         //|0|0|TTTTTTTTTTTTTT|LLLLLLLLLLLLLLLL|
@@ -122,8 +113,8 @@ impl fmt::Display for Message {
 
 #[derive(PartialEq, Eq)]
 pub struct Method(u16);
-const METHOD_BINDING: Method = Method(0x001);
-const METHOD_ALLOCATE: Method = Method(0x003);
+pub const METHOD_BINDING: Method = Method(0x001);
+pub const METHOD_ALLOCATE: Method = Method(0x003);
 impl fmt::Display for Method {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
@@ -137,10 +128,10 @@ impl fmt::Display for Method {
 
 #[derive(PartialEq, Eq)]
 pub struct MethodClass(u8);
-const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
-const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
-const CLASS_SUCCESS: MethodClass = MethodClass(0x10); // 0b10: success
-const CLASS_ERROR: MethodClass = MethodClass(0x11); // 0b11: error
+pub const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
+pub const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
+pub const CLASS_SUCCESS: MethodClass = MethodClass(0x10); // 0b10: success
+pub const CLASS_ERROR: MethodClass = MethodClass(0x11); // 0b11: error
 impl fmt::Display for MethodClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
@@ -149,44 +140,4 @@ impl fmt::Display for MethodClass {
         };
         write!(f, "{}", s)
     }
-}
-
-async fn stun_request(msg: Vec<u8>, remote_address: &str) -> Vec<u8> {
-    println!("{:?}, {:}", msg, remote_address);
-    let socket = UdpSocket::bind("0.0.0.0:34254").expect("couldn't bind to address");
-    println!("{:?}", socket);
-    socket
-        .connect(remote_address)
-        .expect("couldn't connect to address");
-    socket.send(&msg).expect("couldn't send message");
-    let mut buf = [0; 100];
-    let mut receive_bytes = 0;
-    match socket.recv(&mut buf) {
-        Ok(received) => receive_bytes = received,
-        Err(e) => println!("recv function failed: {:?}", e),
-    }
-    let xor_addr = &buf[..receive_bytes].to_vec();
-    return xor_addr.to_vec();
-}
-
-async fn get_global_ip() -> String {
-    let method = METHOD_BINDING;
-    let class = CLASS_REQUEST;
-    let mut stun_request_message = Message::new(method, class);
-    let message = stun_request_message.build();
-    let response = stun_request(message, REMOTE_ADDRESS).await;
-    // 受け取ったbytes数の内、20bytesはheaderなので、残りを読めば良い。
-    let xor_addr = xor_addr::XorMappedAddress::new(
-        response[20..].to_vec(),
-        stun_request_message.transaction_id,
-    );
-    // xor_addr.get_from(&msg)?;
-    println!("{:?}", &xor_addr);
-    return "127.0.0.1".to_string();
-}
-
-#[tokio::main]
-async fn main() {
-    let my_global_ip: String = get_global_ip().await;
-    // println!("{}", my_global_ip);
 }
