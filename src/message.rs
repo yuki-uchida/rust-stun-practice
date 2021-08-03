@@ -1,6 +1,15 @@
 use anyhow::Result;
 use rand::Rng;
+use std::convert::TryInto;
 use std::fmt;
+use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq)]
+pub enum Error {
+    #[allow(non_camel_case_types)]
+    #[error("{0}")]
+    new(String),
+}
 
 pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const ATTRIBUTE_HEADER_SIZE: usize = 4;
@@ -15,12 +24,13 @@ pub trait Setter {
 pub trait Getter {
     fn get_from(&mut self, m: &Message) -> Result<()>;
 }
-
+#[derive(Debug)]
 pub struct Message {
     pub method: Method,
     pub class: MethodClass,
     pub transaction_id: [u8; TRANSACTION_ID_SIZE],
 }
+
 impl Message {
     pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
@@ -100,6 +110,72 @@ impl Message {
         let stun_message_length = 0 as u16;
         return stun_message_length;
     }
+
+    pub fn decode_from_packet(packet: &Vec<u8>) -> Result<Self> {
+        // request method type
+        const RIGHT_BIT: u16 = 0xf; // 0b0000000000001111
+        const CENTOR_BIT: u16 = 0x70; // 0b0000000001110000
+        const LEFT_BIT: u16 = 0xf80; // 0b0000111110000000
+        const METHOD_CENTOR_SHIFT: u16 = 1;
+        const METHOD_LEFT_DSHIFT: u16 = 2;
+        let right_bit = u16::from_be_bytes([packet[0], packet[1]]) & RIGHT_BIT;
+        let centor_bit =
+            (u16::from_be_bytes([packet[0], packet[1]]) & CENTOR_BIT) << METHOD_CENTOR_SHIFT;
+        let left_bit =
+            (u16::from_be_bytes([packet[0], packet[1]]) & LEFT_BIT) << METHOD_LEFT_DSHIFT;
+        let method_bit = left_bit + centor_bit + right_bit;
+        // println!(
+        //     "method_left_bit: {:05b}, method_centor_bit: {:03b}, method_right_bit: {:04b}, => method: {:014b}",
+        //     left_bit,
+        //     centor_bit,
+        //     right_bit,
+        //     method_bit
+        // );
+        let method = Method(method_bit);
+        // request class type
+        const CLASS_LEFT_BIT: u16 = 0x100; // 0b0000000100000000
+        const CLASS_RIGHT_BIT: u16 = 0x010; // 0b0000000000010000
+        let c1 = u16::from_be_bytes([packet[0], packet[1]]) & CLASS_LEFT_BIT;
+        let c0 = u16::from_be_bytes([packet[0], packet[1]]) & CLASS_RIGHT_BIT;
+        let class_bit = c1 as u8 + c0 as u8;
+        let class = MethodClass(class_bit);
+        // println!(
+        //     "c1: {:01b}, c0: {:01b}, class_bit: {:02b}, class:{:?}",
+        //     c1, c0, class_bit, class
+        // );
+        // attribute length
+        // println!(
+        //     "attribute length: {:016b}",
+        //     u16::from_be_bytes([packet[2], packet[3]])
+        // );
+        // cookie
+        if u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]) != MAGIC_COOKIE {
+            return Err(Error::new(format!(
+                "{:x} is invalid magic cookie (should be {:x})",
+                u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]),
+                MAGIC_COOKIE
+            ))
+            .into());
+        }
+        // transaction id
+        // println!(
+        //     "transaction_id: {:?}, {}, ",
+        //     packet[8..20]
+        //         .iter()
+        //         .map(|n| format!("{:08b}", n))
+        //         .collect::<String>(),
+        //     &packet[8..20]
+        //         .iter()
+        //         .map(|n| format!("{:02X}", n))
+        //         .collect::<String>()
+        // );
+
+        Ok(Message {
+            method: method,
+            class: class,
+            transaction_id: packet[8..20].try_into().unwrap(), // to transform slice into array.
+        })
+    }
 }
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -111,7 +187,7 @@ impl fmt::Display for Message {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct Method(u16);
 pub const METHOD_BINDING: Method = Method(0x001);
 pub const METHOD_ALLOCATE: Method = Method(0x003);
@@ -126,7 +202,7 @@ impl fmt::Display for Method {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct MethodClass(u8);
 pub const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
 pub const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
@@ -136,6 +212,9 @@ impl fmt::Display for MethodClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
             CLASS_REQUEST => "CLASS_REQUEST",
+            CLASS_INDICATION => "CLASS_INDICATION",
+            CLASS_SUCCESS => "CLASS_SUCCESS",
+            CLASS_ERROR => "CLASS_ERROR",
             _ => "unknown class",
         };
         write!(f, "{}", s)
