@@ -1,9 +1,10 @@
+use crate::attribute::*;
 use anyhow::Result;
 use rand::Rng;
 use std::convert::TryInto;
 use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use thiserror::Error;
-
 #[derive(Debug, Error, PartialEq)]
 pub enum Error {
     #[allow(non_camel_case_types)]
@@ -17,17 +18,11 @@ const MESSAGE_HEADER_SIZE: usize = 20; // 160bit = 20bytes
 const TRANSACTION_ID_SIZE: usize = 12; // 96bit = 12 bytes
 const DEFAULT_RAW_CAPACITY: usize = 120; //960bit = 120bytes
 
-pub trait Setter {
-    fn add_to(&self, m: &mut Message) -> Result<()>;
-}
-// Getter parses attribute from *Message.
-pub trait Getter {
-    fn get_from(&mut self, m: &Message) -> Result<()>;
-}
 #[derive(Debug)]
 pub struct Message {
     pub method: Method,
     pub class: MethodClass,
+    pub attributes: Vec<Attribute>,
     pub transaction_id: [u8; TRANSACTION_ID_SIZE],
 }
 
@@ -39,10 +34,40 @@ impl Message {
         Message {
             method: method,
             class: class,
+            attributes: Vec::new(),
             transaction_id: random_transaction_id,
         }
     }
-    pub fn build(&mut self) -> Vec<u8> {
+    pub fn set_xor_mapped_address(&mut self, remote_ip: SocketAddr) {
+        let (ip, port) = (remote_ip.ip(), remote_ip.port() as u32);
+        let (mut raw, length) = if remote_ip.is_ipv4() {
+            (Vec::with_capacity(8), 8) // 8bytes=64bits
+        } else {
+            (Vec::with_capacity(20), 20) // 20bytes=160bits
+        };
+
+        match ip {
+            IpAddr::V4(ipv4) => {
+                // 8bytes=64bits
+                raw.extend_from_slice(&[0; 8]);
+                // family
+                let family: u8 = 0x01;
+                raw[1..2].copy_from_slice(&family.to_be_bytes());
+                // port
+                let port = ((port as u16) ^ (MAGIC_COOKIE >> 16) as u16) as u16;
+                raw[2..4].copy_from_slice(&port.to_be_bytes());
+                // address
+                let ip_addr: u32 = u32::from_be_bytes(ipv4.octets().try_into().unwrap());
+                let xor_ip_addr = (ip_addr as u32) ^ MAGIC_COOKIE;
+                raw[4..8].copy_from_slice(&xor_ip_addr.to_be_bytes());
+                println!("raw: {:?}", raw);
+            }
+            IpAddr::V6(ipv6) => { /* handle IPv6 */ }
+        }
+        let xor_mapped_address_attribute = Attribute::new(ATTR_XORMAPPED_ADDRESS, length, raw);
+        self.attributes.push(xor_mapped_address_attribute);
+    }
+    pub fn encode_to_packet(&mut self) -> Vec<u8> {
         let mut raw = Vec::with_capacity(DEFAULT_RAW_CAPACITY);
         raw.extend_from_slice(&[0; MESSAGE_HEADER_SIZE]);
         //|0|0|TTTTTTTTTTTTTT|LLLLLLLLLLLLLLLL|
@@ -52,6 +77,7 @@ impl Message {
         // 00を埋める
         // 1,2byte目 STUN Message Typeを埋める
         let stun_message_type = self.build_message_type().to_be_bytes();
+        println!("stun_message_type: {:?}", stun_message_type);
         raw[..2].copy_from_slice(&stun_message_type);
         // 3,4byte目 Message Lengthを埋める
         let stun_message_length = self.build_message_length().to_be_bytes();
@@ -61,7 +87,23 @@ impl Message {
         // 9~20byte目 Transaction IDを埋める
         raw[8..20].copy_from_slice(&self.transaction_id);
 
+        let mut index = MESSAGE_HEADER_SIZE;
         // Attributes
+        for attribute in self.attributes.iter() {
+            let attribute_length: usize =
+                (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
+            raw.extend_from_slice(&vec![0; attribute_length]);
+            // Type
+            raw[index..index + 2].copy_from_slice(&attribute.typ.0.to_be_bytes());
+            index += 2;
+            // Length
+            raw[index..index + 2].copy_from_slice(&attribute.length.to_be_bytes());
+            index += 2;
+            // Value
+            raw[index..index + 8].copy_from_slice(&attribute.value);
+            index += 8;
+        }
+
         return raw;
     }
     // 先頭2bitは00で始まることは決まっているので、それ以外の14bitを埋める。
@@ -173,6 +215,7 @@ impl Message {
         Ok(Message {
             method: method,
             class: class,
+            attributes: Vec::new(),
             transaction_id: packet[8..20].try_into().unwrap(), // to transform slice into array.
         })
     }
