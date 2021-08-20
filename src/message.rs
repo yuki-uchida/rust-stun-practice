@@ -30,7 +30,6 @@ impl Message {
     pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
         rand::thread_rng().fill(&mut random_transaction_id);
-        // println!("{:?}", random_transaction_id);
         Message {
             method: method,
             class: class,
@@ -166,13 +165,6 @@ impl Message {
         let left_bit =
             (u16::from_be_bytes([packet[0], packet[1]]) & LEFT_BIT) << METHOD_LEFT_DSHIFT;
         let method_bit = left_bit + centor_bit + right_bit;
-        // println!(
-        //     "method_left_bit: {:05b}, method_centor_bit: {:03b}, method_right_bit: {:04b}, => method: {:014b}",
-        //     left_bit,
-        //     centor_bit,
-        //     right_bit,
-        //     method_bit
-        // );
         let method = Method(method_bit);
         // request class type
         const CLASS_LEFT_BIT: u16 = 0x100; // 0b0000000100000000
@@ -181,15 +173,6 @@ impl Message {
         let c0 = u16::from_be_bytes([packet[0], packet[1]]) & CLASS_RIGHT_BIT;
         let class_bit = c1 as u8 + c0 as u8;
         let class = MethodClass(class_bit);
-        // println!(
-        //     "c1: {:01b}, c0: {:01b}, class_bit: {:02b}, class:{:?}",
-        //     c1, c0, class_bit, class
-        // );
-        // attribute length
-        // println!(
-        //     "attribute length: {:016b}",
-        //     u16::from_be_bytes([packet[2], packet[3]])
-        // );
         // cookie
         if u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]) != MAGIC_COOKIE {
             return Err(Error::new(format!(
@@ -199,18 +182,6 @@ impl Message {
             ))
             .into());
         }
-        // transaction id
-        // println!(
-        //     "transaction_id: {:?}, {}, ",
-        //     packet[8..20]
-        //         .iter()
-        //         .map(|n| format!("{:08b}", n))
-        //         .collect::<String>(),
-        //     &packet[8..20]
-        //         .iter()
-        //         .map(|n| format!("{:02X}", n))
-        //         .collect::<String>()
-        // );
 
         Ok(Message {
             method: method,

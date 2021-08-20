@@ -1,7 +1,7 @@
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub typ: AttributeType,
-    pub length: u16, // ignored while encoding
+    pub length: u16,
     pub value: Vec<u8>,
 }
 impl Attribute {

@@ -31,7 +31,6 @@ pub async fn get_global_ip(remote_address: &String) -> String {
     // 受け取ったbytes数の内、20bytesはheaderなので、残りを読めば良い。
     let xor_addr =
         XorMappedAddress::new(response[20..].to_vec(), stun_request_message.transaction_id);
-    // xor_addr.get_from(&msg)?;
     println!("{:?}", &xor_addr);
     let global_ip_port = xor_addr.ip.to_string() + ":" + &xor_addr.port.to_string();
     return global_ip_port;

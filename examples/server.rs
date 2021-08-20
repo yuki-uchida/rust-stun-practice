@@ -5,7 +5,6 @@ use tokio::net::UdpSocket;
 #[tokio::main]
 async fn main() -> Result<()> {
     let conn = Arc::new(UdpSocket::bind("0.0.0.0:3478").await?);
-    // println!("{:?}", socket);
     let mut buf = [0u8; 1500];
     loop {
         let (n, addr) = match conn.recv_from(&mut buf).await {
@@ -25,8 +24,6 @@ async fn main() -> Result<()> {
         // このaddrをXOR_MAPPED_ADDRESSにして返す仕組みを作る。
         let message = Message::decode_from_packet(&buf[..n].to_vec()).unwrap();
         println!("{:?}", message);
-        // println!("{:?}", message.method);
-        // println!("{:?}", message.class);
         if (message.method == METHOD_BINDING) && (message.class == CLASS_REQUEST) {
             println!("received BINDING REQUEST STUN packet.");
             // ここでUDPSocketでsuccess responseを返す
