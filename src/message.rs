@@ -1,6 +1,16 @@
+use crate::attribute::*;
 use anyhow::Result;
 use rand::Rng;
+use std::convert::TryInto;
 use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use thiserror::Error;
+#[derive(Debug, Error, PartialEq)]
+pub enum Error {
+    #[allow(non_camel_case_types)]
+    #[error("{0}")]
+    new(String),
+}
 
 pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const ATTRIBUTE_HEADER_SIZE: usize = 4;
@@ -8,31 +18,55 @@ const MESSAGE_HEADER_SIZE: usize = 20; // 160bit = 20bytes
 const TRANSACTION_ID_SIZE: usize = 12; // 96bit = 12 bytes
 const DEFAULT_RAW_CAPACITY: usize = 120; //960bit = 120bytes
 
-pub trait Setter {
-    fn add_to(&self, m: &mut Message) -> Result<()>;
-}
-// Getter parses attribute from *Message.
-pub trait Getter {
-    fn get_from(&mut self, m: &Message) -> Result<()>;
-}
-
+#[derive(Debug)]
 pub struct Message {
     pub method: Method,
     pub class: MethodClass,
+    pub attributes: Vec<Attribute>,
     pub transaction_id: [u8; TRANSACTION_ID_SIZE],
 }
+
 impl Message {
     pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
         rand::thread_rng().fill(&mut random_transaction_id);
-        // println!("{:?}", random_transaction_id);
         Message {
             method: method,
             class: class,
+            attributes: Vec::new(),
             transaction_id: random_transaction_id,
         }
     }
-    pub fn build(&mut self) -> Vec<u8> {
+    pub fn set_xor_mapped_address(&mut self, remote_ip: SocketAddr) {
+        let (ip, port) = (remote_ip.ip(), remote_ip.port() as u32);
+        let (mut raw, length) = if remote_ip.is_ipv4() {
+            (Vec::with_capacity(8), 8) // 8bytes=64bits
+        } else {
+            (Vec::with_capacity(20), 20) // 20bytes=160bits
+        };
+
+        match ip {
+            IpAddr::V4(ipv4) => {
+                // 8bytes=64bits
+                raw.extend_from_slice(&[0; 8]);
+                // family
+                let family: u8 = 0x01;
+                raw[1..2].copy_from_slice(&family.to_be_bytes());
+                // port
+                let port = ((port as u16) ^ (MAGIC_COOKIE >> 16) as u16) as u16;
+                raw[2..4].copy_from_slice(&port.to_be_bytes());
+                // address
+                let ip_addr: u32 = u32::from_be_bytes(ipv4.octets().try_into().unwrap());
+                let xor_ip_addr = (ip_addr as u32) ^ MAGIC_COOKIE;
+                raw[4..8].copy_from_slice(&xor_ip_addr.to_be_bytes());
+                println!("raw: {:?}", raw);
+            }
+            IpAddr::V6(ipv6) => { /* handle IPv6 */ }
+        }
+        let xor_mapped_address_attribute = Attribute::new(ATTR_XORMAPPED_ADDRESS, length, raw);
+        self.attributes.push(xor_mapped_address_attribute);
+    }
+    pub fn encode_to_packet(&mut self) -> Vec<u8> {
         let mut raw = Vec::with_capacity(DEFAULT_RAW_CAPACITY);
         raw.extend_from_slice(&[0; MESSAGE_HEADER_SIZE]);
         //|0|0|TTTTTTTTTTTTTT|LLLLLLLLLLLLLLLL|
@@ -42,6 +76,7 @@ impl Message {
         // 00を埋める
         // 1,2byte目 STUN Message Typeを埋める
         let stun_message_type = self.build_message_type().to_be_bytes();
+        println!("stun_message_type: {:?}", stun_message_type);
         raw[..2].copy_from_slice(&stun_message_type);
         // 3,4byte目 Message Lengthを埋める
         let stun_message_length = self.build_message_length().to_be_bytes();
@@ -51,7 +86,23 @@ impl Message {
         // 9~20byte目 Transaction IDを埋める
         raw[8..20].copy_from_slice(&self.transaction_id);
 
+        let mut index = MESSAGE_HEADER_SIZE;
         // Attributes
+        for attribute in self.attributes.iter() {
+            let attribute_length: usize =
+                (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
+            raw.extend_from_slice(&vec![0; attribute_length]);
+            // Type
+            raw[index..index + 2].copy_from_slice(&attribute.typ.0.to_be_bytes());
+            index += 2;
+            // Length
+            raw[index..index + 2].copy_from_slice(&attribute.length.to_be_bytes());
+            index += 2;
+            // Value
+            raw[index..index + 8].copy_from_slice(&attribute.value);
+            index += 8;
+        }
+
         return raw;
     }
     // 先頭2bitは00で始まることは決まっているので、それ以外の14bitを埋める。
@@ -100,6 +151,45 @@ impl Message {
         let stun_message_length = 0 as u16;
         return stun_message_length;
     }
+
+    pub fn decode_from_packet(packet: &Vec<u8>) -> Result<Self> {
+        // request method type
+        const RIGHT_BIT: u16 = 0xf; // 0b0000000000001111
+        const CENTOR_BIT: u16 = 0x70; // 0b0000000001110000
+        const LEFT_BIT: u16 = 0xf80; // 0b0000111110000000
+        const METHOD_CENTOR_SHIFT: u16 = 1;
+        const METHOD_LEFT_DSHIFT: u16 = 2;
+        let right_bit = u16::from_be_bytes([packet[0], packet[1]]) & RIGHT_BIT;
+        let centor_bit =
+            (u16::from_be_bytes([packet[0], packet[1]]) & CENTOR_BIT) << METHOD_CENTOR_SHIFT;
+        let left_bit =
+            (u16::from_be_bytes([packet[0], packet[1]]) & LEFT_BIT) << METHOD_LEFT_DSHIFT;
+        let method_bit = left_bit + centor_bit + right_bit;
+        let method = Method(method_bit);
+        // request class type
+        const CLASS_LEFT_BIT: u16 = 0x100; // 0b0000000100000000
+        const CLASS_RIGHT_BIT: u16 = 0x010; // 0b0000000000010000
+        let c1 = u16::from_be_bytes([packet[0], packet[1]]) & CLASS_LEFT_BIT;
+        let c0 = u16::from_be_bytes([packet[0], packet[1]]) & CLASS_RIGHT_BIT;
+        let class_bit = c1 as u8 + c0 as u8;
+        let class = MethodClass(class_bit);
+        // cookie
+        if u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]) != MAGIC_COOKIE {
+            return Err(Error::new(format!(
+                "{:x} is invalid magic cookie (should be {:x})",
+                u32::from_be_bytes([packet[4], packet[5], packet[6], packet[7]]),
+                MAGIC_COOKIE
+            ))
+            .into());
+        }
+
+        Ok(Message {
+            method: method,
+            class: class,
+            attributes: Vec::new(),
+            transaction_id: packet[8..20].try_into().unwrap(), // to transform slice into array.
+        })
+    }
 }
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -111,7 +201,7 @@ impl fmt::Display for Message {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct Method(u16);
 pub const METHOD_BINDING: Method = Method(0x001);
 pub const METHOD_ALLOCATE: Method = Method(0x003);
@@ -126,7 +216,7 @@ impl fmt::Display for Method {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct MethodClass(u8);
 pub const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
 pub const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
@@ -136,6 +226,9 @@ impl fmt::Display for MethodClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
             CLASS_REQUEST => "CLASS_REQUEST",
+            CLASS_INDICATION => "CLASS_INDICATION",
+            CLASS_SUCCESS => "CLASS_SUCCESS",
+            CLASS_ERROR => "CLASS_ERROR",
             _ => "unknown class",
         };
         write!(f, "{}", s)
