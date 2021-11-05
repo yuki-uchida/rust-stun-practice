@@ -26,6 +26,11 @@ pub struct Message {
     pub transaction_id: [u8; TRANSACTION_ID_SIZE],
 }
 
+pub trait Setter {
+    // STUNの拡張であるTURN側からもmessageに拡張のattributeを追加するためにSetterを追加
+    fn set_extra_attribute(&self, m: &mut Message) -> Result<()>;
+}
+
 impl Message {
     pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
@@ -37,6 +42,15 @@ impl Message {
             transaction_id: random_transaction_id,
         }
     }
+    // This function calls extra attribute's Setter(set_extra_attribute).
+    // dyn = トレイトオブジェクトであることを明示する.ここでは型ではなくトレイトを引数に渡している。
+    // 具体的な型は隠蔽し、トレイトオブジェクトであることだけを確認する。これによって、setterに値するものがどんな型であっても問題ない。
+    // TURNのRequestedTransportなどがこれを利用する。
+    pub fn set_extra_attribute(&mut self, setter: Box<dyn Setter>) -> Result<()> {
+        setter.set_extra_attribute(self)?;
+        Ok(())
+    }
+
     pub fn set_xor_mapped_address(&mut self, remote_ip: SocketAddr) {
         let (ip, port) = (remote_ip.ip(), remote_ip.port() as u32);
         let (mut raw, length) = if remote_ip.is_ipv4() {
@@ -76,7 +90,6 @@ impl Message {
         // 00を埋める
         // 1,2byte目 STUN Message Typeを埋める
         let stun_message_type = self.build_message_type().to_be_bytes();
-        println!("stun_message_type: {:?}", stun_message_type);
         raw[..2].copy_from_slice(&stun_message_type);
         // 3,4byte目 Message Lengthを埋める
         let stun_message_length = self.build_message_length().to_be_bytes();
@@ -85,24 +98,38 @@ impl Message {
         raw[4..8].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
         // 9~20byte目 Transaction IDを埋める
         raw[8..20].copy_from_slice(&self.transaction_id);
-
         let mut index = MESSAGE_HEADER_SIZE;
         // Attributes
         for attribute in self.attributes.iter() {
-            let attribute_length: usize =
-                (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
-            raw.extend_from_slice(&vec![0; attribute_length]);
+            if attribute.length % 4 == 0 {
+                let attribute_length: usize =
+                    (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
+                raw.extend_from_slice(&vec![0; attribute_length]);
+            } else {
+                let attribute_length: usize =
+                    (ATTRIBUTE_HEADER_SIZE as u16 + (((attribute.length / 4) + 1) * 4)) as usize;
+                raw.extend_from_slice(&vec![0; attribute_length]);
+            }
             // Type
             raw[index..index + 2].copy_from_slice(&attribute.typ.0.to_be_bytes());
             index += 2;
+
             // Length
             raw[index..index + 2].copy_from_slice(&attribute.length.to_be_bytes());
             index += 2;
-            // Value
-            raw[index..index + 8].copy_from_slice(&attribute.value);
-            index += 8;
-        }
 
+            // Value
+            raw[index..(index + attribute.length as usize)].copy_from_slice(&attribute.value);
+            if attribute.length % 4 == 0 {
+                index += attribute.length as usize
+            } else {
+                index += (((attribute.length / 4) + 1) * 4) as usize;
+            }
+            println!(
+                "index {:?} {:?} {:?} {:?} {:?}",
+                index, attribute.typ, attribute.length, attribute.value, raw
+            );
+        }
         return raw;
     }
     // 先頭2bitは00で始まることは決まっているので、それ以外の14bitを埋める。
@@ -130,25 +157,26 @@ impl Message {
         let centor_bit = (method & CENTOR_BIT) << METHOD_CENTOR_SHIFT;
         let left_bit = (method & LEFT_BIT) << METHOD_LEFT_DSHIFT;
         let method = left_bit + centor_bit + right_bit;
-        println!(
-            "method_left_bit: {}, method_centor_bit: {}, method_right_bit: {}, => method: {}",
-            left_bit, centor_bit, right_bit, method
-        );
+
         // class
         let class = self.class.0 as u16;
         let c1 = (class & CLASS_LEFT_BIT) << CLASS_LEFT_SHIFT;
         let c0 = (class & CLASS_RIGHT_BIT) << CLASS_RIGHT_SHIFT;
-        println!(
-            "c1(class_left_bit): {:?}, c0(class_right_bit): {:?}",
-            c1, c0
-        );
         let class = c1 + c0;
         let message_type_bytes = method + class;
         return message_type_bytes;
     }
     fn build_message_length(&mut self) -> u16 {
         //TODO: impl attributes and message_length
-        let stun_message_length = 0 as u16;
+        let mut stun_message_length = 0 as u16;
+        for attribute in self.attributes.iter() {
+            stun_message_length += ATTRIBUTE_HEADER_SIZE as u16;
+            if attribute.length % 4 == 0 {
+                stun_message_length += attribute.length as u16;
+            } else {
+                stun_message_length += (((attribute.length / 4) + 1) * 4) as u16;
+            }
+        }
         return stun_message_length;
     }
 
@@ -183,10 +211,85 @@ impl Message {
             .into());
         }
 
+        // attributes
+        let mut attributes = Vec::new();
+        // type length value
+        // HEADER SIZE 4
+        // 1個で8bit
+        // typeは16bit(2byte) lengthは16bit(2byte)
+        // valueは謎だが32bit単位(4byte)
+        let mut attribute_start_index: usize = 20;
+        loop {
+            if packet.len() == attribute_start_index {
+                break;
+            }
+            let t = u16::from_be_bytes([
+                packet[attribute_start_index],
+                packet[attribute_start_index + 1],
+            ]);
+            let l = u16::from_be_bytes([
+                packet[attribute_start_index + 2],
+                packet[attribute_start_index + 3],
+            ]);
+            let v = &packet[(attribute_start_index + 4)..(attribute_start_index + 4 + l as usize)];
+            let attribute: Attribute = match t {
+                0x0019 => Attribute {
+                    typ: ATTR_REQUESTED_TRANSPORT,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0020 => Attribute {
+                    typ: ATTR_XORMAPPED_ADDRESS,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0014 => Attribute {
+                    typ: ATTR_REALM,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0015 => Attribute {
+                    typ: ATTR_NONCE,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0006 => Attribute {
+                    typ: ATTR_USERNAME,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0008 => Attribute {
+                    typ: ATTR_MESSAGE_INTEGRITY,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x0009 => Attribute {
+                    typ: ATTR_ERROR_CODE,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                0x8028 => Attribute {
+                    typ: ATTR_FINGERPRINT,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                _ => Attribute {
+                    typ: ATTR_UNKNOWN_ATTRIBUTES,
+                    length: l,
+                    value: v.to_vec(),
+                },
+            };
+            if l % 4 == 0 {
+                attribute_start_index += 4 + l as usize;
+            } else {
+                attribute_start_index += 4 + (((l / 4) + 1) * 4) as usize;
+            }
+            attributes.push(attribute);
+        }
         Ok(Message {
             method: method,
             class: class,
-            attributes: Vec::new(),
+            attributes: attributes,
             transaction_id: packet[8..20].try_into().unwrap(), // to transform slice into array.
         })
     }
