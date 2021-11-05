@@ -45,3 +45,4 @@ pub const ATTR_NONCE: AttributeType = AttributeType(0x0015);
 pub const ATTR_USERNAME: AttributeType = AttributeType(0x0006);
 pub const ATTR_MESSAGE_INTEGRITY: AttributeType = AttributeType(0x0008);
 pub const ATTR_FINGERPRINT: AttributeType = AttributeType(0x8028);
+

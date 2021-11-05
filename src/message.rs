@@ -146,8 +146,8 @@ impl Message {
         const LEFT_BIT: u16 = 0xf80; // 0b0000111110000000
         const METHOD_CENTOR_SHIFT: u16 = 1;
         const METHOD_LEFT_DSHIFT: u16 = 2;
-        const CLASS_LEFT_BIT: u16 = 0x1; // 0b01
-        const CLASS_RIGHT_BIT: u16 = 0x2; // 0b10
+        const CLASS_LEFT_BIT: u16 = 0x2; // 0b10
+        const CLASS_RIGHT_BIT: u16 = 0x1; // 0b01
         const CLASS_LEFT_SHIFT: u16 = 7;
         const CLASS_RIGHT_SHIFT: u16 = 4;
 
@@ -162,6 +162,10 @@ impl Message {
         let class = self.class.0 as u16;
         let c1 = (class & CLASS_LEFT_BIT) << CLASS_LEFT_SHIFT;
         let c0 = (class & CLASS_RIGHT_BIT) << CLASS_RIGHT_SHIFT;
+        println!(
+            "class {:?}, c1(class_left_bit): {:?}, c0(class_right_bit): {:?}",
+            class, c1, c0
+        );
         let class = c1 + c0;
         let message_type_bytes = method + class;
         return message_type_bytes;
@@ -323,8 +327,8 @@ impl fmt::Display for Method {
 pub struct MethodClass(u8);
 pub const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
 pub const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
-pub const CLASS_SUCCESS: MethodClass = MethodClass(0x10); // 0b10: success
-pub const CLASS_ERROR: MethodClass = MethodClass(0x11); // 0b11: error
+pub const CLASS_SUCCESS: MethodClass = MethodClass(0x02); // 0b10: success
+pub const CLASS_ERROR: MethodClass = MethodClass(0x03); // 0b11: error
 impl fmt::Display for MethodClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match *self {
