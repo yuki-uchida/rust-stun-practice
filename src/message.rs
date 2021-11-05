@@ -164,7 +164,15 @@ impl Message {
     }
     fn build_message_length(&mut self) -> u16 {
         //TODO: impl attributes and message_length
-        let stun_message_length = 0 as u16;
+        let mut stun_message_length = 0 as u16;
+        for attribute in self.attributes.iter() {
+            stun_message_length += ATTRIBUTE_HEADER_SIZE as u16;
+            if attribute.length % 4 == 0 {
+                stun_message_length += attribute.length as u16;
+            } else {
+                stun_message_length += (((attribute.length / 4) + 1) * 4) as u16;
+            }
+        }
         return stun_message_length;
     }
 
@@ -199,10 +207,50 @@ impl Message {
             .into());
         }
 
+        // attributes
+        let mut attributes = Vec::new();
+        // type length value
+        // HEADER SIZE 4
+        // 1個で8bit
+        // typeは16bit(2byte) lengthは16bit(2byte)
+        // valueは謎だが32bit単位(4byte)
+        let mut attribute_start_index: usize = 20;
+        loop {
+            if packet.len() == attribute_start_index {
+                break;
+            }
+            let t = u16::from_be_bytes([
+                packet[attribute_start_index],
+                packet[attribute_start_index + 1],
+            ]);
+            let l = u16::from_be_bytes([
+                packet[attribute_start_index + 2],
+                packet[attribute_start_index + 3],
+            ]);
+            let v = &packet[(attribute_start_index + 4)..(attribute_start_index + 4 + l as usize)];
+            let attribute: Attribute = match t {
+                0x0020 => Attribute {
+                    typ: ATTR_XORMAPPED_ADDRESS,
+                    length: l,
+                    value: v.to_vec(),
+                },
+                _ => Attribute {
+                    typ: ATTR_UNKNOWN_ATTRIBUTES,
+                    length: l,
+                    value: v.to_vec(),
+                },
+            };
+            if l % 4 == 0 {
+                attribute_start_index += 4 + l as usize;
+            } else {
+                attribute_start_index += 4 + (((l / 4) + 1) * 4) as usize;
+            }
+            attributes.push(attribute);
+        }
         Ok(Message {
             method: method,
             class: class,
-            attributes: Vec::new(),
+            attributes: attributes,
             transaction_id: packet[8..20].try_into().unwrap(), // to transform slice into array.
         })
     }

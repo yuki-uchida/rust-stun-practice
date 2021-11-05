@@ -18,3 +18,4 @@ impl Attribute {
 pub struct AttributeType(pub u16);
 
 pub const ATTR_XORMAPPED_ADDRESS: AttributeType = AttributeType(0x0020);
+pub const ATTR_UNKNOWN_ATTRIBUTES: AttributeType = AttributeType(0x000A);
