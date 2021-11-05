@@ -89,18 +89,34 @@ impl Message {
         let mut index = MESSAGE_HEADER_SIZE;
         // Attributes
         for attribute in self.attributes.iter() {
-            let attribute_length: usize =
-                (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
-            raw.extend_from_slice(&vec![0; attribute_length]);
+            if attribute.length % 4 == 0 {
+                let attribute_length: usize =
+                    (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
+                raw.extend_from_slice(&vec![0; attribute_length]);
+            } else {
+                let attribute_length: usize =
+                    (ATTRIBUTE_HEADER_SIZE as u16 + (((attribute.length / 4) + 1) * 4)) as usize;
+                raw.extend_from_slice(&vec![0; attribute_length]);
+            }
             // Type
             raw[index..index + 2].copy_from_slice(&attribute.typ.0.to_be_bytes());
             index += 2;
+
             // Length
             raw[index..index + 2].copy_from_slice(&attribute.length.to_be_bytes());
             index += 2;
+
             // Value
-            raw[index..index + 8].copy_from_slice(&attribute.value);
-            index += 8;
+            raw[index..(index + attribute.length as usize)].copy_from_slice(&attribute.value);
+            if attribute.length % 4 == 0 {
+                index += attribute.length as usize
+            } else {
+                index += (((attribute.length / 4) + 1) * 4) as usize;
+            }
+            println!(
+                "index {:?} {:?} {:?} {:?} {:?}",
+                index, attribute.typ, attribute.length, attribute.value, raw
+            );
         }
 
         return raw;
