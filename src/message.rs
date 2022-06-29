@@ -18,7 +18,7 @@ const MESSAGE_HEADER_SIZE: usize = 20; // 160bit = 20bytes
 const TRANSACTION_ID_SIZE: usize = 12; // 96bit = 12 bytes
 const DEFAULT_RAW_CAPACITY: usize = 120; //960bit = 120bytes
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Message {
     pub method: Method,
     pub class: MethodClass,
@@ -30,7 +30,6 @@ pub trait Setter {
     // STUNの拡張であるTURN側からもmessageに拡張のattributeを追加するためにSetterを追加
     fn set_extra_attribute(&self, m: &mut Message) -> Result<()>;
 }
-
 impl Message {
     pub fn new(method: Method, class: MethodClass) -> Self {
         let mut random_transaction_id = [0u8; TRANSACTION_ID_SIZE];
@@ -126,7 +125,7 @@ impl Message {
                 index += (((attribute.length / 4) + 1) * 4) as usize;
             }
             println!(
-                "index {:?} {:?} {:?} {:?} {:?}",
+                "index={:?}, attribute.typ={:?}, attribute.length={:?}, attribute.value={:?} raw={:?}",
                 index, attribute.typ, attribute.length, attribute.value, raw
             );
         }
@@ -308,7 +307,7 @@ impl fmt::Display for Message {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Default)]
 pub struct Method(u16);
 pub const METHOD_BINDING: Method = Method(0x001);
 pub const METHOD_ALLOCATE: Method = Method(0x003);
@@ -323,7 +322,7 @@ impl fmt::Display for Method {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Default)]
 pub struct MethodClass(u8);
 pub const CLASS_REQUEST: MethodClass = MethodClass(0x00); // 0b00: request
 pub const CLASS_INDICATION: MethodClass = MethodClass(0x01); // 0b01: indication
