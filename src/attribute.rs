@@ -1,4 +1,10 @@
+use crate::error::*;
+use crate::message::{Message, Setter};
 use std::fmt;
+
+const MAX_NONCE_BYTE: usize = 763;
+const MAX_REALM_BYTE: usize = 763;
+
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub typ: AttributeType,
@@ -14,6 +20,46 @@ impl Attribute {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct TextAttribute {
+    pub attr: AttributeType,
+    pub text: String,
+}
+impl TextAttribute {
+    pub fn new(attr: AttributeType, text: String) -> Self {
+        TextAttribute { attr, text }
+    }
+}
+impl fmt::Display for TextAttribute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.text)
+    }
+}
+
+impl Setter for TextAttribute {
+    fn set_extra_attribute(&self, m: &mut Message) -> Result<()> {
+        let text = self.text.as_bytes();
+        let max_len = match self.attr {
+            ATTR_NONCE => MAX_NONCE_BYTE,
+            ATTR_REALM => MAX_REALM_BYTE,
+            _ => return Err(Error::Other(format!("Unsupported AttributeType"))),
+        };
+        // let (mut raw, length) = (
+        //     Vec::with_capacity(REQUESTED_TRANSPORT_SIZE),
+        //     REQUESTED_TRANSPORT_SIZE,
+        // );
+        // // extra_attribute
+        // raw.extend_from_slice(&[0; REQUESTED_TRANSPORT_SIZE]);
+        // raw[0] = self.protocol.0;
+        let extra_attribute = Attribute::new(ATTR_REQUESTED_TRANSPORT, MAX_NONCE_B as u16, raw);
+        m.attributes.push(extra_attribute);
+        Ok(())
+    }
+}
+
+pub type Nonce = TextAttribute;
+pub type Realm = TextAttribute;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct AttributeType(pub u16);
@@ -45,4 +91,3 @@ pub const ATTR_NONCE: AttributeType = AttributeType(0x0015);
 pub const ATTR_USERNAME: AttributeType = AttributeType(0x0006);
 pub const ATTR_MESSAGE_INTEGRITY: AttributeType = AttributeType(0x0008);
 pub const ATTR_FINGERPRINT: AttributeType = AttributeType(0x8028);
-

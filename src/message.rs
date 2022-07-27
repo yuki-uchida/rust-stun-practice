@@ -1,17 +1,9 @@
 use crate::attribute::*;
-use anyhow::Result;
+use crate::error::*;
 use rand::Rng;
 use std::convert::TryInto;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use thiserror::Error;
-#[derive(Debug, Error, PartialEq)]
-pub enum Error {
-    #[allow(non_camel_case_types)]
-    #[error("{0}")]
-    new(String),
-}
-
 pub(crate) const MAGIC_COOKIE: u32 = 0x2112A442; // 32bit = 4bytes
 const ATTRIBUTE_HEADER_SIZE: usize = 4;
 const MESSAGE_HEADER_SIZE: usize = 20; // 160bit = 20bytes
@@ -40,6 +32,14 @@ impl Message {
             attributes: Vec::new(),
             transaction_id: random_transaction_id,
         }
+    }
+    pub fn contains(&self, t: AttributeType) -> bool {
+        for a in &self.attributes {
+            if a.typ == t {
+                return true;
+            }
+        }
+        return false;
     }
     // This function calls extra attribute's Setter(set_extra_attribute).
     // dyn = トレイトオブジェクトであることを明示する.ここでは型ではなくトレイトを引数に渡している。
