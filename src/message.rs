@@ -100,6 +100,7 @@ impl Message {
         let mut index = MESSAGE_HEADER_SIZE;
         // Attributes
         for attribute in self.attributes.iter() {
+            // Attributeのサイズ分あらかじめ配列を長くしておく
             if attribute.length % 4 == 0 {
                 let attribute_length: usize =
                     (ATTRIBUTE_HEADER_SIZE as u16 + attribute.length) as usize;
@@ -118,6 +119,10 @@ impl Message {
             index += 2;
 
             // Value
+            println!("raw={:?}", raw);
+            println!("index={:?} attribute.length={:?}", index, attribute.length);
+            println!("index={:?} attribute.value={:?}", index, attribute.value);
+            // サイズが合ってない。lengthが763bytesなのに、実際には数十しかないので、`panicked at 'source slice length (16) does not match destination slice length (763)` がでる
             raw[index..(index + attribute.length as usize)].copy_from_slice(&attribute.value);
             if attribute.length % 4 == 0 {
                 index += attribute.length as usize

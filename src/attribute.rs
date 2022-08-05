@@ -45,14 +45,7 @@ impl Setter for TextAttribute {
             ATTR_REALM => MAX_REALM_BYTE,
             _ => return Err(Error::Other(format!("Unsupported AttributeType"))),
         };
-        // let (mut raw, length) = (
-        //     Vec::with_capacity(REQUESTED_TRANSPORT_SIZE),
-        //     REQUESTED_TRANSPORT_SIZE,
-        // );
-        // // extra_attribute
-        // raw.extend_from_slice(&[0; REQUESTED_TRANSPORT_SIZE]);
-        // raw[0] = self.protocol.0;
-        let extra_attribute = Attribute::new(ATTR_REQUESTED_TRANSPORT, MAX_NONCE_B as u16, raw);
+        let extra_attribute = Attribute::new(self.attr, max_len as u16, text.to_vec());
         m.attributes.push(extra_attribute);
         Ok(())
     }
